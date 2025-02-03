@@ -14,3 +14,25 @@ textarea {
   resize: none;
   line-height: 1.5;
 }
+
+/* Стили для темной темы */
+@media (prefers-color-scheme: dark) {
+  textarea {
+    background-color: #000000;
+    color: #ffffff;
+  }
+}
+
+/* Стили для светлой темы */
+@media (prefers-color-scheme: light) {
+  textarea {
+    background-color: #ffffff;
+    color: #000000;
+  }
+}
+
+.dark-theme {
+  background-color: #000000;
+  color: #ffffff;
+}
+

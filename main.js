@@ -52,7 +52,10 @@ editor.addEventListener('input', () => {
           // оставляем строку равной исходной (но можно заменить на expr)
           newLine = expr;
         }
-      }
+      } else {
+		  // Чтобы в новую строку не переносился результат из прошлой.
+		  newLine = '';
+	  }
     }
     newLines.push(newLine);
     
@@ -78,3 +81,18 @@ editor.addEventListener('input', () => {
     editor.selectionStart = editor.selectionEnd = newCaretPos;
   }
 });
+
+// Применяем настройки темы как в системе
+const updateTheme = () => {
+  if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    document.body.textarea.classList.add('dark-theme');
+  } else {
+    document.body.textarea.classList.remove('dark-theme');
+  }
+}
+
+// Проверка на загрузке страницы
+updateTheme();
+
+// Проверка на изменение системных настроек
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', updateTheme);

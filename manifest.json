@@ -1,6 +1,7 @@
 {
-  "name": "PWA Calculator Text Editor",
-  "short_name": "CalcEditor",
+  "name": "ConCalc - Console Calculator",
+  "short_name": "ConCalc",
+  "version": "1.1",
   "start_url": "index.html",
   "display": "standalone",
   "background_color": "#ffffff",

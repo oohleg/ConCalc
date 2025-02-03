@@ -1,4 +1,4 @@
-const cacheName = 'calc-editor-v1';
+const cacheName = 'calc-editor-v1.1';
 const assets = [
   '/',
   '/index.html',
@@ -25,3 +25,16 @@ self.addEventListener('fetch', event => {
       .then(response => response || fetch(event.request))
   );
 });
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys().then((cacheNames) => {
+      return Promise.all(
+        cacheNames.map((cache) => {
+          if (cache !== cacheName) {
+            return caches.delete(cache);
+          }
+        })
+      );
+    })
+  
