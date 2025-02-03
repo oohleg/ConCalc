@@ -1,4 +1,4 @@
-const cacheName = 'calc-editor-v1.1';
+const cacheName = 'calc-editor-v1.2';
 const assets = [
   '/',
   '/index.html',
@@ -37,4 +37,6 @@ self.addEventListener('activate', (event) => {
         })
       );
     })
+  );
+});
   
