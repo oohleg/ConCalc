@@ -84,10 +84,11 @@ editor.addEventListener('input', () => {
 
 // Применяем настройки темы как в системе
 const updateTheme = () => {
+  const el_editor = document.getElementById('editor');
   if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-    document.body.textarea.classList.add('dark-theme');
+    el_editor.classList.add('dark-theme');
   } else {
-    document.body.textarea.classList.remove('dark-theme');
+    el_editor.classList.remove('dark-theme');
   }
 }
 
