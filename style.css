@@ -1,0 +1,16 @@
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+}
+
+textarea {
+  width: 100%;
+  height: 100vh;
+  padding: 20px;
+  font-size: 18px;
+  box-sizing: border-box;
+  border: none;
+  outline: none;
+  resize: none;
+  line-height: 1.5;
+}
