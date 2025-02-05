@@ -1,4 +1,4 @@
-const cacheName = 'calc-editor-v4';
+const cacheName = 'calc-editor-v5';
 const assets = [
   './',
   'index.html',

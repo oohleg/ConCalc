@@ -42,7 +42,9 @@ editor.addEventListener('input', () => {
       // Если ранее был добавлен результат, удаляем его — берём только часть до " = "
       let parts = line.split(' = ');
       let expr = parts[0];
-      if (expr.trim() !== '') {
+	  if (expr.trim() === '???') {
+		  newLine = 'Возможности тут: https://mathjs.org/docs/expressions/syntax.html';
+	  } else if (expr.trim() !== '') {
         try {
           // Вычисляем выражение с помощью math.js
           let result = math.evaluate(expr.replace(/\s/g, ''));
