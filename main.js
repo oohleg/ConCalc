@@ -41,11 +41,11 @@ editor.addEventListener('input', () => {
     if (line.trim() !== '') {
       // Если ранее был добавлен результат, удаляем его — берём только часть до " = "
       let parts = line.split(' = ');
-      let expr = parts[0].trim();
-      if (expr !== '') {
+      let expr = parts[0];
+      if (expr.trim() !== '') {
         try {
-          // Вычисляем выражение с помощью math.js (math.js корректно обрабатывает оператор '^')
-          let result = math.evaluate(expr);
+          // Вычисляем выражение с помощью math.js
+          let result = math.evaluate(expr.replace(/\s/g, ''));
           newLine = `${expr} = ${result}`;
         } catch (error) {
           // Если выражение ещё не закончено или содержит ошибку,
