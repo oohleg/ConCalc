@@ -1,10 +1,11 @@
-const cacheName = 'calc-editor-v5';
+const cacheName = 'calc-editor-v6';
 const assets = [
   './',
   'index.html',
   'style.css',
   'main.js',
   'manifest.json',
+  'icons/icon-96.png',
   'icons/icon-192.png',
   'icons/icon-512.png'
 ];
