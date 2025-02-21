@@ -12,11 +12,14 @@
 </head>
 <body>
   <!-- Многострочное текстовое поле, в котором будет происходить ввод выражений и их автоматическое обновление -->
-  <textarea id="editor" placeholder="Введите выражение, например:
+  <div class="container">
+    <textarea id="editor" placeholder="Введите выражение, например:
 2+2
 3*5
-2^3
-??? - все возможности."></textarea>
+2^3"></textarea>
+    <button id="help-btn" title="Возможности">?</button>
+    <button id="clear-btn" title="Очистить">C</button>
+  </div>
   <script src="main.js"></script>
 </body>
 </html>

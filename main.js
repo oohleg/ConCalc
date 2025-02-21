@@ -42,9 +42,7 @@ editor.addEventListener('input', () => {
       // Если ранее был добавлен результат, удаляем его — берём только часть до " = "
       let parts = line.split(' = ');
       let expr = parts[0];
-	  if (expr.trim() === '???') {
-		  newLine = 'Возможности тут: https://mathjs.org/docs/expressions/syntax.html';
-	  } else if (expr.trim() !== '') {
+	  if (expr.trim() !== '') {
         try {
           // Вычисляем выражение с помощью math.js
           let result = math.evaluate(expr.replace(/\s/g, ''));
@@ -82,6 +80,28 @@ editor.addEventListener('input', () => {
     editor.value = newText;
     editor.selectionStart = editor.selectionEnd = newCaretPos;
   }
+});
+
+// Обработчик для кнопки очистки
+const clearBtn = document.getElementById('clear-btn');
+clearBtn.addEventListener('click', () => {
+  editor.value = "";
+});
+
+// Обработчик для кнопки помощи
+const helpBtn = document.getElementById('help-btn');
+helpBtn.addEventListener('click', () => {
+  // Если редактор не пустой и не заканчивается переводом строки, добавляем \n
+  if (editor.value && !editor.value.endsWith('\n')) {
+    editor.value += '\n\n';
+  }
+  // Добавляем текст
+  editor.value += 'Возможности тут: https://mathjs.org/docs/expressions/syntax.html';
+  // Обновляем вычисления
+  editor.dispatchEvent(new Event('input'));
+  // Переводим фокус на редактор и устанавливаем курсор в конец
+  editor.focus();
+  editor.selectionStart = editor.selectionEnd = editor.value.length;
 });
 
 // Применяем настройки темы как в системе
