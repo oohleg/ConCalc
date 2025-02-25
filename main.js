@@ -82,6 +82,29 @@ editor.addEventListener('input', () => {
   }
 });
 
+editor.addEventListener('paste', (event) => {
+  event.preventDefault(); // предотвращаем стандартное поведение вставки
+  // Получаем текст из буфера обмена
+  const clipboardData = event.clipboardData || window.clipboardData;
+  let pastedText = clipboardData.getData('text/plain');
+  // Удаляем символы перевода строки
+  pastedText = pastedText.replace(/(\r\n|\n|\r)/gm, '');
+  
+  // Вставляем очищенный текст на место текущей выделенной области
+  const start = editor.selectionStart;
+  const end = editor.selectionEnd;
+  const originalValue = editor.value;
+  editor.value = originalValue.slice(0, start) + pastedText + originalValue.slice(end);
+  
+  // Обновляем позицию курсора
+  const newCursorPos = start + pastedText.length;
+  editor.selectionStart = editor.selectionEnd = newCursorPos;
+  
+  // Генерируем событие input для обновления вычислений
+  editor.dispatchEvent(new Event('input'));
+});
+
+
 // Обработчик для кнопки очистки
 const clearBtn = document.getElementById('clear-btn');
 clearBtn.addEventListener('click', () => {
