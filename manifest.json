@@ -7,6 +7,16 @@
   "background_color": "#ffffff",
   "theme_color": "#0078d7",
   "icons": [
+  {
+      "src": "icons/icon-16.png",
+      "sizes": "16х16",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/icon-32.png",
+      "sizes": "32х32",
+      "type": "image/png"
+    }
     {
       "src": "icons/icon-192.png",
       "sizes": "192x192",
