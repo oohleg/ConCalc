@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <title>ConCalc</title>
+  <title>ConCalc 10</title>
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="style.css">
   <link type="image/png" sizes="96x96" rel="icon" href="icons/icon-96.png">
@@ -13,12 +13,12 @@
 <body>
   <!-- Многострочное текстовое поле, в котором будет происходить ввод выражений и их автоматическое обновление -->
   <div class="container">
-    <textarea id="editor" placeholder="Введите выражение, например:
-2+2
-3*5
-2^3"></textarea>
-    <button id="help-btn" title="Возможности">?</button>
-    <button id="clear-btn" title="Очистить">C</button>
+    <textarea id="editor" placeholder="Выражение в строке вычисляется по мере ввода.
+Текст сохраняется между запусками.
+Математические возможности и горячие клавиши покажет нажатие на кнопку ?.
+"></textarea>
+    <button id="help-btn" title="Помощь (Ctrl+H)">?</button>
+    <button id="clear-btn" title="Очистить (Ctrl+X)">C</button>
   </div>
   <script src="main.js"></script>
 </body>
