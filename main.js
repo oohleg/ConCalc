@@ -5,6 +5,12 @@ if ('serviceWorker' in navigator) {
     .catch(err => console.error('Ошибка регистрации Service Worker:', err));
 }
 
+// Вставляем настройку точных вычислений
+math.config({
+  number: 'BigNumber',
+  precision: 64
+});
+
 const editor = document.getElementById('editor');
 
 // Восстанавливаем сохранённый текст из localStorage (если есть)
@@ -17,6 +23,35 @@ let restoring = false;
 let skipCalculation = false;
 // Стек для хранения состояний редактора (текст + положение каретки) для отмены (Ctrl+Z)
 let undoStack = [];
+
+// Автопрокрутка при выходе за пределы textarea
+function scrollCaretIntoView() {
+  const style      = getComputedStyle(editor);
+  const lineHeight = parseFloat(style.lineHeight);
+  const text       = editor.value;
+  const caretPos   = editor.selectionStart;
+  const lines      = text.split('\n');
+  const caretLine  = text.slice(0, caretPos).split('\n').length - 1;
+  const caretY     = caretLine * lineHeight;
+
+  const viewTop    = editor.scrollTop;
+  const viewBottom = viewTop + editor.clientHeight;
+
+  if (caretY < viewTop) {
+    // Строка ушла вверх — доскролливаем так, чтобы она была сверху
+    editor.scrollTop = caretY;
+  } 
+  else if (caretY + lineHeight > viewBottom) {
+    // Строка ушла вниз
+    if (caretLine === lines.length - 1) {
+      // Если это последняя (только что добавленная) строка — сразу в самый низ
+      editor.scrollTop = editor.scrollHeight;
+    } else {
+      // Иначе — подвинем так, чтобы она оказалась внизу видимой области
+      editor.scrollTop = caretY + lineHeight - editor.clientHeight;
+    }
+  }
+}
 
 // Функция для показа tooltip в центре экрана на 500 мс (при копировании)
 function showCopyTooltip() {
@@ -211,6 +246,9 @@ editor.addEventListener('keydown', (event) => {
       newCaretPos += lines[i].length + 1;
     }
     editor.selectionStart = editor.selectionEnd = newCaretPos;
+	
+	scrollCaretIntoView();
+	
     skipCalculation = true;
   }
   // Обработка Enter (без Ctrl)
@@ -223,6 +261,9 @@ editor.addEventListener('keydown', (event) => {
     const newText = text.slice(0, lineEnd) + "\n" + text.slice(lineEnd);
     editor.value = newText;
     editor.selectionStart = editor.selectionEnd = lineEnd + 1;
+
+	scrollCaretIntoView();
+
     skipCalculation = true;
   }
   // Обработка Ctrl+H: вывод помощи (аналог нажатия на кнопку помощи)
@@ -261,7 +302,8 @@ function updateEditor() {
       if (expr.trim() !== '') {
         try {
           let result = math.evaluate(expr.replace(/\s/g, ''));
-          newLine = `${expr} = ${result}`;
+		  let out = result.toString()
+          newLine = `${expr} = ${out}`;
         } catch (error) {
           newLine = expr;
         }
@@ -284,6 +326,9 @@ function updateEditor() {
     isUpdating = true;
     editor.value = newText;
     editor.selectionStart = editor.selectionEnd = newCaretPos;
+	
+	scrollCaretIntoView();
+	
     isUpdating = false;
   }
 }
