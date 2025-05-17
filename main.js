@@ -302,7 +302,7 @@ function updateEditor() {
       if (expr.trim() !== '') {
         try {
           let result = math.evaluate(expr.replace(/\s/g, ''));
-		  let out = result.toString()
+		  let out = math.format(result, {notation: 'fixed', precision: 10}).replace(/\.?0+$/, '');
           newLine = `${expr} = ${out}`;
         } catch (error) {
           newLine = expr;

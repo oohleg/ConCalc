@@ -1,7 +1,7 @@
 {
   "name": "Console Calculator",
   "short_name": "ConCalc",
-  "version": "14",
+  "version": "15",
   "start_url": "index.html",
   "display": "standalone",
   "background_color": "#ffffff",
