@@ -1,387 +1,394 @@
-// Регистрируем Service Worker для поддержки офлайн-режима и кеширования
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('service-worker.js')
-    .then(() => console.log('Service Worker зарегистрирован'))
-    .catch(err => console.error('Ошибка регистрации Service Worker:', err));
-}
+// --- КОНФИГУРАЦИЯ ---
+const APP_VERSION = '21'; // <--- МЕНЯТЬ ВЕРСИЮ ТОЛЬКО ЗДЕСЬ
 
-// Вставляем настройку точных вычислений
-math.config({
-  number: 'BigNumber',
-  precision: 64
-});
-
+// --- ИНИЦИАЛИЗАЦИЯ ИНТЕРФЕЙСА ---
 const editor = document.getElementById('editor');
 
-// Восстанавливаем сохранённый текст из localStorage (если есть)
-editor.value = localStorage.getItem('editorText') || "";
+// Устанавливаем динамический placeholder с версией
+editor.placeholder = `\n\nConCalc v${APP_VERSION} - текстовый калькулятор.\nВыражение в строке вычисляется по мере ввода.\nТекст сохраняется между запусками.\nКнопка ? - математические возможности и горячие клавиши.\n`;
 
-// Флаги для отличия программных обновлений от пользовательских изменений и для восстановления состояния
-let isUpdating = false;
-let restoring = false;
-// Флаг для пропуска автообновления при нажатии Enter или Ctrl+Enter
-let skipCalculation = false;
-// Стек для хранения состояний редактора (текст + положение каретки) для отмены (Ctrl+Z)
-let undoStack = [];
+// --- ДИНАМИЧЕСКИЙ MANIFEST.JSON (PWA) ---
+const manifestData = {
+  "name": "Console Calculator",
+  "short_name": "ConCalc",
+  "version": APP_VERSION,
+  "start_url": "index.html",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0078d7",
+  "icons": [
+    { "src": "icons/icon-16.png", "sizes": "16x16", "type": "image/png" },
+    { "src": "icons/icon-32.png", "sizes": "32x32", "type": "image/png" },
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+};
+const manifestBlob = new Blob([JSON.stringify(manifestData)], {type: 'application/json'});
+const manifestURL = URL.createObjectURL(manifestBlob);
+const link = document.createElement('link');
+link.rel = 'manifest';
+link.href = manifestURL;
+document.head.appendChild(link);
 
-// Автопрокрутка при выходе за пределы textarea
-function scrollCaretIntoView() {
-  const style      = getComputedStyle(editor);
-  const lineHeight = parseFloat(style.lineHeight);
-  const text       = editor.value;
-  const caretPos   = editor.selectionStart;
-  const lines      = text.split('\n');
-  const caretLine  = text.slice(0, caretPos).split('\n').length - 1;
-  const caretY     = caretLine * lineHeight;
+// --- РЕГИСТРАЦИЯ SERVICE WORKER ---
+if ('serviceWorker' in navigator) {
+  // Передаем версию в URL, чтобы SW обновил кеш
+  navigator.serviceWorker.register(`service-worker.js?v=${APP_VERSION}`)
+    .then(() => console.log(`Service Worker v${APP_VERSION} registered`))
+    .catch(err => console.log('SW registration skipped (file:// protocol)'));
+}
 
-  const viewTop    = editor.scrollTop;
-  const viewBottom = viewTop + editor.clientHeight;
+// --- КОД MATH WORKER (BLOB) ---
+// Используем ту же версию 11.8.0 внутри воркера
+const WORKER_CODE = `
+  importScripts('https://cdnjs.cloudflare.com/ajax/libs/mathjs/11.8.0/math.min.js');
+  math.config({ number: 'BigNumber', precision: 64 });
 
-  if (caretY < viewTop) {
-    // Строка ушла вверх — доскролливаем так, чтобы она была сверху
-    editor.scrollTop = caretY;
-  } 
-  else if (caretY + lineHeight > viewBottom) {
-    // Строка ушла вниз
-    if (caretLine === lines.length - 1) {
-      // Если это последняя (только что добавленная) строка — сразу в самый низ
-      editor.scrollTop = editor.scrollHeight;
-    } else {
-      // Иначе — подвинем так, чтобы она оказалась внизу видимой области
-      editor.scrollTop = caretY + lineHeight - editor.clientHeight;
+  self.onmessage = function(e) {
+    const { id, text } = e.data;
+    const lines = text.split('\\n');
+    const results = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      let line = lines[i];
+      let resultStr = null;
+      if (line.trim() !== '') {
+        let parts = line.split(' = ');
+        let expr = parts[0];
+        if (expr.trim() !== '') {
+          try {
+            const cleanExpr = expr.replace(/,/g, '.').replace(/\\s/g, '');
+            let result = math.evaluate(cleanExpr);
+            let out = math.format(result, { notation: 'fixed', precision: 10 }).replace(/\\.?0+$/, '');
+            resultStr = expr + ' = ' + out; 
+          } catch (error) { resultStr = expr; }
+        }
+      }
+      if (resultStr === null) resultStr = line.split(' = ')[0]; 
+      results.push(resultStr);
     }
+    self.postMessage({ id: id, results: results });
+  };
+`;
+
+// --- ПЕРЕМЕННЫЕ СОСТОЯНИЯ ---
+const MAX_HISTORY_SIZE = 300;
+let historyStack = [];
+let historyIndex = -1;
+let isUndoingRedoing = false; 
+let saveTimeout = null; 
+
+let worker = null;
+let currentRequestId = 0;
+let workerTimeout = null;
+const CALCULATION_TIMEOUT = 1000; 
+
+// --- МЕНЕДЖЕР ИСТОРИИ ---
+function saveHistory(text, caret, force = false) {
+  if (isUndoingRedoing) return;
+  if (!force && historyStack.length > 0 && historyIndex >= 0) {
+    if (historyStack[historyIndex].text === text) return;
+  }
+  if (historyIndex < historyStack.length - 1) {
+    historyStack = historyStack.slice(0, historyIndex + 1);
+  }
+  historyStack.push({ text: text, caret: caret });
+  historyIndex++;
+  if (historyStack.length > MAX_HISTORY_SIZE) {
+    historyStack.shift();
+    historyIndex--;
   }
 }
 
-// Функция для показа tooltip в центре экрана на 500 мс (при копировании)
+function undo() {
+  if (historyIndex > 0) {
+    historyIndex--;
+    restoreState();
+  }
+}
+
+function redo() {
+  if (historyIndex < historyStack.length - 1) {
+    historyIndex++;
+    restoreState();
+  }
+}
+
+function restoreState() {
+  const state = historyStack[historyIndex];
+  if (!state) return;
+  isUndoingRedoing = true;
+  editor.value = state.text;
+  editor.selectionStart = editor.selectionEnd = state.caret;
+  localStorage.setItem('editorText', state.text);
+  scrollCaretIntoView();
+  triggerCalculation(); 
+  isUndoingRedoing = false;
+}
+
+// --- ИНИЦИАЛИЗАЦИЯ ---
+const savedText = localStorage.getItem('editorText') || "";
+editor.value = savedText;
+saveHistory(editor.value, editor.selectionStart, true);
+initWorker();
+
+// --- УПРАВЛЕНИЕ ВОРКЕРОМ ---
+function initWorker() {
+  if (worker) worker.terminate();
+  const blob = new Blob([WORKER_CODE], { type: 'application/javascript' });
+  const workerUrl = URL.createObjectURL(blob);
+  worker = new Worker(workerUrl);
+  
+  worker.onmessage = function(e) {
+    const { id, results } = e.data;
+    if (id !== currentRequestId) return;
+    if (workerTimeout) { clearTimeout(workerTimeout); workerTimeout = null; }
+    applyWorkerResults(results);
+  };
+  worker.onerror = (err) => console.error("Worker Error:", err);
+}
+
+function triggerCalculation() {
+  if (isUndoingRedoing) return;
+  currentRequestId++;
+  const thisRequestId = currentRequestId;
+  if (workerTimeout) clearTimeout(workerTimeout);
+  
+  workerTimeout = setTimeout(() => {
+    console.warn("Calculation timeout. Restarting Worker.");
+    initWorker(); 
+  }, CALCULATION_TIMEOUT);
+
+  worker.postMessage({ id: thisRequestId, text: editor.value });
+}
+
+function applyWorkerResults(newLines) {
+  const originalText = editor.value;
+  const originalLines = originalText.split('\n');
+  if (originalLines.length !== newLines.length) return;
+
+  let hasChanges = false;
+  let resultLines = [];
+
+  for (let i = 0; i < originalLines.length; i++) {
+    const originalLine = originalLines[i];
+    const newLine = newLines[i];
+    const originalExpr = originalLine.split(' = ')[0];
+    const newExpr = newLine.split(' = ')[0];
+
+    // Применяем результат только если выражение слева не изменилось
+    if (originalExpr === newExpr && originalLine !== newLine) {
+        hasChanges = true;
+        resultLines.push(newLine);
+    } else {
+      resultLines.push(originalLine);
+    }
+  }
+
+  if (hasChanges) {
+    const start = editor.selectionStart;
+    const end = editor.selectionEnd;
+    editor.value = resultLines.join('\n');
+    editor.selectionStart = start;
+    editor.selectionEnd = end;
+    scrollCaretIntoView();
+  }
+}
+
+// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ UI ---
+function scrollCaretIntoView() {
+  const style = getComputedStyle(editor);
+  const lineHeight = parseFloat(style.lineHeight);
+  const text = editor.value;
+  const caretPos = editor.selectionStart;
+  const lines = text.split('\n');
+  const caretLine = text.slice(0, caretPos).split('\n').length - 1;
+  const caretY = caretLine * lineHeight;
+  const viewTop = editor.scrollTop;
+  const viewBottom = viewTop + editor.clientHeight;
+
+  if (caretY < viewTop) editor.scrollTop = caretY;
+  else if (caretY + lineHeight > viewBottom) {
+    if (caretLine === lines.length - 1) editor.scrollTop = editor.scrollHeight;
+    else editor.scrollTop = caretY + lineHeight - editor.clientHeight;
+  }
+}
+
 function showCopyTooltip() {
   const tooltip = document.createElement('div');
   tooltip.textContent = "Скопировано";
-  tooltip.style.position = "fixed";
-  tooltip.style.left = "50%";
-  tooltip.style.top = "50%";
-  tooltip.style.transform = "translate(-50%, -50%)";
-  tooltip.style.backgroundColor = "rgba(0, 0, 0, 0.6)";
-  tooltip.style.color = "#fff";
-  tooltip.style.padding = "10px 20px";
-  tooltip.style.borderRadius = "4px";
-  tooltip.style.zIndex = "1000";
-  tooltip.style.pointerEvents = "none";
+  tooltip.style.cssText = `
+    position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    background-color: rgba(0, 0, 0, 0.6); color: #fff; padding: 10px 20px;
+    border-radius: 4px; z-index: 1000; pointer-events: none;
+  `;
   document.body.appendChild(tooltip);
-  setTimeout(() => {
-    tooltip.remove();
-  }, 500);
+  setTimeout(() => tooltip.remove(), 500);
 }
 
-// Единый обработчик keydown для Ctrl+Z, Ctrl+S, Ctrl+C, Ctrl+X, Ctrl+K, Ctrl+D, Ctrl+Enter, Ctrl+H и Enter
-editor.addEventListener('keydown', (event) => {
-  // Обработка отмены (Ctrl+Z)
-  if (event.ctrlKey && event.code === 'KeyZ') {
-    event.preventDefault();
-    if (undoStack.length > 1) {
-      // Удаляем текущее состояние и восстанавливаем предыдущее
-      undoStack.pop();
-      const prevState = undoStack[undoStack.length - 1];
-      isUpdating = true;
-      restoring = true;
-      editor.value = prevState.text;
-      editor.selectionStart = editor.selectionEnd = prevState.caret;
-      updateEditor();
-      isUpdating = false;
-    }
-  }
-  // Обработка сохранения (Ctrl+S)
-  else if (event.ctrlKey && event.code === 'KeyS') {
-    event.preventDefault();
-    if (window.showSaveFilePicker) {
-      (async () => {
-        try {
-          const options = {
-            types: [{
-              description: 'Text Files',
-              accept: { 'text/plain': ['.txt'] },
-            }],
-          };
-          const handle = await window.showSaveFilePicker(options);
-          const writable = await handle.createWritable();
-          await writable.write(editor.value);
-          await writable.close();
-        } catch (err) {
-          console.error("Ошибка сохранения файла: ", err);
-        }
-      })();
-    } else {
-      let fileName = prompt("Введите имя файла для сохранения", "document.txt");
-      if (fileName) {
-        if (!fileName.toLowerCase().endsWith(".txt")) {
-          fileName += ".txt";
-        }
-        const blob = new Blob([editor.value], { type: 'text/plain' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = fileName;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-      }
-    }
-  }
-  // Обработка копирования (Ctrl+C) при отсутствии выделения
-  else if (event.ctrlKey && event.code === 'KeyC') {
-    if (editor.selectionStart === editor.selectionEnd) {
-      event.preventDefault();
-      const text = editor.value;
-      const caretPos = editor.selectionStart;
-      const lines = text.split('\n');
-      let cumulative = 0;
-      let currentLineIndex = 0;
-      for (let i = 0; i < lines.length; i++) {
-        if (cumulative + lines[i].length >= caretPos) {
-          currentLineIndex = i;
-          break;
-        }
-        cumulative += lines[i].length + 1;
-      }
-      let currentLine = lines[currentLineIndex];
-      const parts = currentLine.split(' = ');
-      let result = "";
-      if (parts.length > 1) {
-        result = parts[1].trim();
-      }
-      if (result) {
-        navigator.clipboard.writeText(result)
-          .then(() => {
-            console.log("Скопирован результат: " + result);
-            showCopyTooltip();
-          })
-          .catch((err) => console.error("Ошибка копирования: ", err));
-      }
-    }
-  }
-  // Обработка вырезания (Ctrl+X) при отсутствии выделения – сохраняем состояние и очищаем поле ввода
-  else if (event.ctrlKey && event.code === 'KeyX') {
-    if (editor.selectionStart === editor.selectionEnd) {
-      event.preventDefault();
-      undoStack.push({ text: editor.value, caret: editor.selectionStart });
-      editor.value = "";
-      editor.dispatchEvent(new Event('input'));
-      editor.focus();
-    }
-  }
-  // Обработка удаления текущей строки (Ctrl+K)
-  else if (event.ctrlKey && event.code === 'KeyK') {
-    event.preventDefault();
-    undoStack.push({ text: editor.value, caret: editor.selectionStart });
-    const text = editor.value;
+// Helper для операций со строками (удаление, дублирование)
+function handleLineOp(operation) {
+    saveHistory(editor.value, editor.selectionStart, true);
+    const lines = editor.value.split('\n');
     const caretPos = editor.selectionStart;
-    const lines = text.split('\n');
-    let cumulative = 0;
-    let currentLineIndex = 0;
-    for (let i = 0; i < lines.length; i++) {
-      if (cumulative + lines[i].length >= caretPos) {
-        currentLineIndex = i;
-        break;
-      }
-      cumulative += lines[i].length + 1;
+    let cum = 0, idx = 0;
+    for(let i=0; i<lines.length; i++) {
+        if(cum + lines[i].length >= caretPos) { idx = i; break; }
+        cum += lines[i].length + 1;
     }
-    lines.splice(currentLineIndex, 1);
-    const newText = lines.join('\n');
-    editor.value = newText;
-    let newCaretPos = cumulative;
-    if (currentLineIndex >= lines.length) {
-      newCaretPos = newText.length;
-    }
-    editor.selectionStart = editor.selectionEnd = newCaretPos;
-    editor.dispatchEvent(new Event('input'));
-  }
-  // Обработка дублирования текущей строки (Ctrl+D)
-  else if (event.ctrlKey && event.code === 'KeyD') {
-    event.preventDefault();
-    undoStack.push({ text: editor.value, caret: editor.selectionStart });
-    const text = editor.value;
-    const caretPos = editor.selectionStart;
-    const lines = text.split('\n');
-    let cumulative = 0;
-    let currentLineIndex = 0;
-    for (let i = 0; i < lines.length; i++) {
-      if (cumulative + lines[i].length >= caretPos) {
-        currentLineIndex = i;
-        break;
-      }
-      cumulative += lines[i].length + 1;
-    }
-    const duplicateLine = lines[currentLineIndex];
-    lines.splice(currentLineIndex + 1, 0, duplicateLine);
-    const newText = lines.join('\n');
-    editor.value = newText;
-    let newCaretPos = 0;
-    for (let i = 0; i <= currentLineIndex; i++) {
-      newCaretPos += lines[i].length + 1;
-    }
-    editor.selectionStart = editor.selectionEnd = newCaretPos;
-    editor.dispatchEvent(new Event('input'));
-  }
-  // Обработка Ctrl+Enter: вставляем пустую строку перед текущей и переводим каретку в начало новой строки
-  else if (event.ctrlKey && (event.key === 'Enter' || event.keyCode === 13)) {
-    event.preventDefault();
-    const text = editor.value;
-    const caretPos = editor.selectionStart;
-    const lines = text.split('\n');
-    let cumulative = 0;
-    let currentLineIndex = 0;
-    for (let i = 0; i < lines.length; i++) {
-      if (cumulative + lines[i].length >= caretPos) {
-        currentLineIndex = i;
-        break;
-      }
-      cumulative += lines[i].length + 1;
-    }
-    lines.splice(currentLineIndex, 0, "");
-    const newText = lines.join('\n');
-    editor.value = newText;
-    let newCaretPos = 0;
-    for (let i = 0; i < currentLineIndex; i++) {
-      newCaretPos += lines[i].length + 1;
-    }
-    editor.selectionStart = editor.selectionEnd = newCaretPos;
-	
-	scrollCaretIntoView();
-	
-    skipCalculation = true;
-  }
-  // Обработка Enter (без Ctrl)
-  else if (!event.ctrlKey && (event.key === 'Enter' || event.keyCode === 13)) {
-    event.preventDefault();
-    const text = editor.value;
-    const caretPos = editor.selectionStart;
-    const nextNewline = text.indexOf('\n', caretPos);
-    const lineEnd = nextNewline === -1 ? text.length : nextNewline;
-    const newText = text.slice(0, lineEnd) + "\n" + text.slice(lineEnd);
-    editor.value = newText;
-    editor.selectionStart = editor.selectionEnd = lineEnd + 1;
+    
+    operation(lines, idx);
+    
+    editor.value = lines.join('\n');
+    // Восстановление позиции курсора
+    let newPos = 0;
+    const targetIdx = Math.min(idx, lines.length);
+    for(let i=0; i<targetIdx; i++) newPos += lines[i].length + 1;
+    if (lines.length > targetIdx) newPos += lines[targetIdx].length;
 
-	scrollCaretIntoView();
-
-    skipCalculation = true;
-  }
-  // Обработка Ctrl+H: вывод помощи (аналог нажатия на кнопку помощи)
-  else if (event.ctrlKey && event.code === 'KeyH') {
-    event.preventDefault();
-    helpBtn.click();
-  }
-});
-
-// Функция для автоматического вычисления выражений и обновления редактора
-function updateEditor() {
-  const originalText = editor.value;
-  const originalCaretPos = editor.selectionStart;
-  const lines = originalText.split('\n');
-  
-  let cumulative = 0;
-  let caretLine = 0;
-  let caretCol = 0;
-  for (let i = 0; i < lines.length; i++) {
-    if (cumulative + lines[i].length >= originalCaretPos) {
-      caretLine = i;
-      caretCol = originalCaretPos - cumulative;
-      break;
-    }
-    cumulative += lines[i].length + 1;
-  }
-  
-  let newLines = [];
-  let newCaretPos = 0;
-  for (let i = 0; i < lines.length; i++) {
-    let line = lines[i];
-    let newLine = line;
-    if (line.trim() !== '') {
-      let parts = line.split(' = ');
-      let expr = parts[0];
-      if (expr.trim() !== '') {
-        try {
-          let result = math.evaluate(expr.replace(/\s/g, ''));
-		  let out = math.format(result, {notation: 'fixed', precision: 10}).replace(/\.?0+$/, '');
-          newLine = `${expr} = ${out}`;
-        } catch (error) {
-          newLine = expr;
-        }
-      } else {
-        newLine = '';
-      }
-    }
-    newLines.push(newLine);
-    if (i < caretLine) {
-      newCaretPos += newLine.length + 1;
-    } else if (i === caretLine) {
-      const sepIndex = newLine.indexOf(' = ');
-      let maxPos = sepIndex !== -1 ? sepIndex : newLine.length;
-      newCaretPos += Math.min(caretCol, maxPos);
-    }
-  }
-  
-  const newText = newLines.join('\n');
-  if (newText !== originalText) {
-    isUpdating = true;
-    editor.value = newText;
-    editor.selectionStart = editor.selectionEnd = newCaretPos;
-	
-	scrollCaretIntoView();
-	
-    isUpdating = false;
-  }
-}
-
-// Обработчик события input для автоматического вычисления выражений и сохранения содержимого
-editor.addEventListener('input', () => {
-  if (skipCalculation) {
-    skipCalculation = false;
+    editor.selectionStart = editor.selectionEnd = newPos;
+    
+    triggerCalculation();
+    saveHistory(editor.value, editor.selectionStart, true);
     localStorage.setItem('editorText', editor.value);
+}
+
+// --- ОБРАБОТЧИКИ СОБЫТИЙ ---
+editor.addEventListener('keydown', (event) => {
+  // Undo/Redo
+  if (event.ctrlKey && event.code === 'KeyZ' && !event.shiftKey) { event.preventDefault(); undo(); return; }
+  if ((event.ctrlKey && event.code === 'KeyY') || (event.ctrlKey && event.shiftKey && event.code === 'KeyZ')) { event.preventDefault(); redo(); return; }
+  
+  // Save/Help/Copy
+  if (event.ctrlKey && event.code === 'KeyS') { event.preventDefault(); saveToFile(); return; }
+  if (event.ctrlKey && event.code === 'KeyH') { event.preventDefault(); helpBtn.click(); return; }
+  if (event.ctrlKey && event.code === 'KeyC') {
+    if (editor.selectionStart === editor.selectionEnd) { event.preventDefault(); copyLineResult(); }
     return;
   }
   
-  if (!isUpdating && !restoring) {
-    undoStack.push({ text: editor.value, caret: editor.selectionStart });
-  } else if (restoring) {
-    restoring = false;
+  // Clear (Ctrl+X)
+  if (event.ctrlKey && event.code === 'KeyX') { 
+    if (editor.selectionStart === editor.selectionEnd) {
+      event.preventDefault();
+      saveHistory(editor.value, editor.selectionStart, true);
+      editor.value = "";
+      editor.dispatchEvent(new Event('input'));
+      editor.focus();
+      saveHistory(editor.value, 0, true);
+    }
+    return;
   }
   
-  updateEditor();
+  // Duplicate (Ctrl+D)
+  if (event.ctrlKey && event.code === 'KeyD') { 
+    event.preventDefault();
+    handleLineOp((lines, idx) => {
+        lines.splice(idx + 1, 0, lines[idx]);
+    });
+    return;
+  }
+
+  // Delete Line (Ctrl+K)
+  if (event.ctrlKey && event.code === 'KeyK') { 
+    event.preventDefault();
+    handleLineOp((lines, idx) => {
+        lines.splice(idx, 1);
+    });
+    return;
+  }
+
+  // Insert Line (Ctrl+Enter)
+  if (event.ctrlKey && (event.key === 'Enter' || event.keyCode === 13)) { 
+    event.preventDefault();
+    handleLineOp((lines, idx) => {
+        lines.splice(idx, 0, "");
+    });
+    return;
+  }
+
+  // Normal Enter
+  if (!event.ctrlKey && (event.key === 'Enter' || event.keyCode === 13)) { 
+    event.preventDefault();
+    saveHistory(editor.value, editor.selectionStart);
+    const text = editor.value;
+    const nextNewline = text.indexOf('\n', editor.selectionStart);
+    const lineEnd = nextNewline === -1 ? text.length : nextNewline;
+    editor.value = text.slice(0, lineEnd) + "\n" + text.slice(lineEnd);
+    editor.selectionStart = editor.selectionEnd = lineEnd + 1;
+    scrollCaretIntoView();
+    saveHistory(editor.value, editor.selectionStart, true);
+    localStorage.setItem('editorText', editor.value);
+    return;
+  }
+});
+
+editor.addEventListener('input', () => {
+  if (isUndoingRedoing) return;
+  localStorage.setItem('editorText', editor.value);
+  triggerCalculation();
+  if (saveTimeout) clearTimeout(saveTimeout);
+  saveTimeout = setTimeout(() => saveHistory(editor.value, editor.selectionStart), 500);
+});
+
+editor.addEventListener('paste', (event) => {
+  event.preventDefault();
+  saveHistory(editor.value, editor.selectionStart, true);
+  const pasted = (event.clipboardData || window.clipboardData).getData('text/plain').replace(/(\r\n|\n|\r)/gm, '');
+  const start = editor.selectionStart;
+  editor.value = editor.value.slice(0, start) + pasted + editor.value.slice(editor.selectionEnd);
+  editor.selectionStart = editor.selectionEnd = start + pasted.length;
+  triggerCalculation();
+  saveHistory(editor.value, editor.selectionStart, true);
   localStorage.setItem('editorText', editor.value);
 });
 
-// Обработчик события paste для удаления символов перевода строки
-editor.addEventListener('paste', (event) => {
-  event.preventDefault();
-  const clipboardData = event.clipboardData || window.clipboardData;
-  let pastedText = clipboardData.getData('text/plain');
-  pastedText = pastedText.replace(/(\r\n|\n|\r)/gm, '');
-  const start = editor.selectionStart;
-  const end = editor.selectionEnd;
-  const originalValue = editor.value;
-  editor.value = originalValue.slice(0, start) + pastedText + originalValue.slice(end);
-  const newCursorPos = start + pastedText.length;
-  editor.selectionStart = editor.selectionEnd = newCursorPos;
-  editor.dispatchEvent(new Event('input'));
-});
-
-// Обработчик для кнопки очистки
-const clearBtn = document.getElementById('clear-btn');
-clearBtn.addEventListener('click', () => {
-  undoStack.push({ text: editor.value, caret: editor.selectionStart });
-  editor.value = "";
-  editor.dispatchEvent(new Event('input'));
-  editor.focus();
-});
-
-// Обработчик для кнопки помощи
-const helpBtn = document.getElementById('help-btn');
-helpBtn.addEventListener('click', () => {
-  if (editor.value && !editor.value.endsWith('\n')) {
-    editor.value += '\n\n';
+function saveToFile() {
+  if (window.showSaveFilePicker) {
+    (async () => {
+      try {
+        const h = await window.showSaveFilePicker({types:[{description:'Text', accept:{'text/plain':['.txt']}}]});
+        const w = await h.createWritable(); await w.write(editor.value); await w.close();
+      } catch(e){}
+    })();
+  } else {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([editor.value], {type:'text/plain'}));
+    a.download = prompt("Имя файла", "doc.txt") || "doc.txt";
+    a.click();
   }
-  editor.value += `Математические возможности:
+}
+
+function copyLineResult() {
+  const lines = editor.value.split('\n');
+  let cum=0, idx=0;
+  for(let i=0; i<lines.length; i++) {
+     if(cum + lines[i].length >= editor.selectionStart) { idx=i; break; }
+     cum += lines[i].length + 1;
+  }
+  const parts = lines[idx].split(' = ');
+  if(parts[1]) {
+      navigator.clipboard.writeText(parts[1].trim()).then(showCopyTooltip);
+  }
+}
+
+// Кнопки интерфейса
+document.getElementById('clear-btn').onclick = () => {
+    saveHistory(editor.value, editor.selectionStart, true);
+    editor.value = "";
+    editor.dispatchEvent(new Event('input'));
+    saveHistory("", 0, true);
+};
+
+const helpBtn = document.getElementById('help-btn');
+helpBtn.onclick = () => {
+  saveHistory(editor.value, editor.selectionStart, true);
+  if (editor.value && !editor.value.endsWith('\n')) editor.value += '\n\n';
+  
+  // Вставляем текст помощи с версией
+  editor.value += `ConCalc v${APP_VERSION}
+
+Математические возможности:
 https://mathjs.org/docs/expressions/syntax.html
 
 Горячие клавиши:
@@ -391,25 +398,17 @@ https://mathjs.org/docs/expressions/syntax.html
 - Ctrl+D дублирует строку.
 - Ctrl+Enter вставляет строку перед текущей.
 - Ctrl+S сохраняет всё в файл.
+- Ctrl+Z/Y: Отмена/Повтор
 - Ctrl+H выводит помощь.
 `;
-  editor.dispatchEvent(new Event('input'));
-  editor.focus();
+  
   editor.selectionStart = editor.selectionEnd = editor.value.length;
-});
-
-// Применяем настройки темы, как в системе
-const updateTheme = () => {
-  const el_editor = document.getElementById('editor');
-  if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-    el_editor.classList.add('dark-theme');
-  } else {
-    el_editor.classList.remove('dark-theme');
-  }
+  triggerCalculation();
+  saveHistory(editor.value, editor.selectionStart, true);
+  editor.focus();
 };
 
+const updateTheme = () => document.getElementById('editor').classList.toggle('dark-theme', window.matchMedia('(prefers-color-scheme: dark)').matches);
 updateTheme();
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', updateTheme);
-
-// Устанавливаем фокус на редактор после загрузки страницы
 editor.focus();

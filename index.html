@@ -3,25 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <title>ConCalc</title>
-  <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="style.css">
   <link type="image/png" sizes="96x96" rel="icon" href="icons/icon-16.png">
   <link type="image/png" sizes="96x96" rel="icon" href="icons/icon-32.png">
   <link type="image/png" sizes="96x96" rel="icon" href="icons/icon-192.png">
   <link type="image/png" sizes="96x96" rel="icon" href="icons/icon-512.png">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <!-- Подключаем math.js через CDN -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/11.8.0/math.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/14.8.1/math.min.js"></script>
 </head>
 <body>
-  <!-- Многострочное текстовое поле, в котором будет происходить ввод выражений и их автоматическое обновление -->
   <div class="container">
-    <textarea id="editor" placeholder="
-
-Выражение в строке вычисляется по мере ввода.
-Текст сохраняется между запусками.
-Кнопка ? - математические возможности и горячие клавиши.
-"></textarea>
+    <textarea id="editor"></textarea>
     <button id="help-btn" title="Помощь (Ctrl+H)">?</button>
     <button id="clear-btn" title="Очистить (Ctrl+X)">C</button>
   </div>
