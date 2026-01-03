@@ -1,10 +1,10 @@
 // --- КОНФИГУРАЦИЯ ---
-const APP_VERSION = '21'; // <--- МЕНЯТЬ ВЕРСИЮ ТОЛЬКО ЗДЕСЬ
+const APP_VERSION = '23'; // <--- Версия обновлена
 
 // --- ИНИЦИАЛИЗАЦИЯ ИНТЕРФЕЙСА ---
 const editor = document.getElementById('editor');
 
-// Устанавливаем динамический placeholder с версией
+// 1. Устанавливаем динамический placeholder с версией
 editor.placeholder = `\n\nConCalc v${APP_VERSION} - текстовый калькулятор.\nВыражение в строке вычисляется по мере ввода.\nТекст сохраняется между запусками.\nКнопка ? - математические возможности и горячие клавиши.\n`;
 
 // --- ДИНАМИЧЕСКИЙ MANIFEST.JSON (PWA) ---
@@ -32,16 +32,14 @@ document.head.appendChild(link);
 
 // --- РЕГИСТРАЦИЯ SERVICE WORKER ---
 if ('serviceWorker' in navigator) {
-  // Передаем версию в URL, чтобы SW обновил кеш
   navigator.serviceWorker.register(`service-worker.js?v=${APP_VERSION}`)
     .then(() => console.log(`Service Worker v${APP_VERSION} registered`))
     .catch(err => console.log('SW registration skipped (file:// protocol)'));
 }
 
 // --- КОД MATH WORKER (BLOB) ---
-// Используем ту же версию 11.8.0 внутри воркера
 const WORKER_CODE = `
-  importScripts('https://cdnjs.cloudflare.com/ajax/libs/mathjs/11.8.0/math.min.js');
+  importScripts('https://cdnjs.cloudflare.com/ajax/libs/mathjs/14.8.1/math.min.js');
   math.config({ number: 'BigNumber', precision: 64 });
 
   self.onmessage = function(e) {
@@ -176,7 +174,6 @@ function applyWorkerResults(newLines) {
     const originalExpr = originalLine.split(' = ')[0];
     const newExpr = newLine.split(' = ')[0];
 
-    // Применяем результат только если выражение слева не изменилось
     if (originalExpr === newExpr && originalLine !== newLine) {
         hasChanges = true;
         resultLines.push(newLine);
@@ -226,7 +223,6 @@ function showCopyTooltip() {
   setTimeout(() => tooltip.remove(), 500);
 }
 
-// Helper для операций со строками (удаление, дублирование)
 function handleLineOp(operation) {
     saveHistory(editor.value, editor.selectionStart, true);
     const lines = editor.value.split('\n');
@@ -240,7 +236,6 @@ function handleLineOp(operation) {
     operation(lines, idx);
     
     editor.value = lines.join('\n');
-    // Восстановление позиции курсора
     let newPos = 0;
     const targetIdx = Math.min(idx, lines.length);
     for(let i=0; i<targetIdx; i++) newPos += lines[i].length + 1;
@@ -255,11 +250,8 @@ function handleLineOp(operation) {
 
 // --- ОБРАБОТЧИКИ СОБЫТИЙ ---
 editor.addEventListener('keydown', (event) => {
-  // Undo/Redo
   if (event.ctrlKey && event.code === 'KeyZ' && !event.shiftKey) { event.preventDefault(); undo(); return; }
   if ((event.ctrlKey && event.code === 'KeyY') || (event.ctrlKey && event.shiftKey && event.code === 'KeyZ')) { event.preventDefault(); redo(); return; }
-  
-  // Save/Help/Copy
   if (event.ctrlKey && event.code === 'KeyS') { event.preventDefault(); saveToFile(); return; }
   if (event.ctrlKey && event.code === 'KeyH') { event.preventDefault(); helpBtn.click(); return; }
   if (event.ctrlKey && event.code === 'KeyC') {
@@ -267,7 +259,6 @@ editor.addEventListener('keydown', (event) => {
     return;
   }
   
-  // Clear (Ctrl+X)
   if (event.ctrlKey && event.code === 'KeyX') { 
     if (editor.selectionStart === editor.selectionEnd) {
       event.preventDefault();
@@ -280,34 +271,24 @@ editor.addEventListener('keydown', (event) => {
     return;
   }
   
-  // Duplicate (Ctrl+D)
   if (event.ctrlKey && event.code === 'KeyD') { 
     event.preventDefault();
-    handleLineOp((lines, idx) => {
-        lines.splice(idx + 1, 0, lines[idx]);
-    });
+    handleLineOp((lines, idx) => { lines.splice(idx + 1, 0, lines[idx]); });
     return;
   }
 
-  // Delete Line (Ctrl+K)
   if (event.ctrlKey && event.code === 'KeyK') { 
     event.preventDefault();
-    handleLineOp((lines, idx) => {
-        lines.splice(idx, 1);
-    });
+    handleLineOp((lines, idx) => { lines.splice(idx, 1); });
     return;
   }
 
-  // Insert Line (Ctrl+Enter)
   if (event.ctrlKey && (event.key === 'Enter' || event.keyCode === 13)) { 
     event.preventDefault();
-    handleLineOp((lines, idx) => {
-        lines.splice(idx, 0, "");
-    });
+    handleLineOp((lines, idx) => { lines.splice(idx, 0, ""); });
     return;
   }
 
-  // Normal Enter
   if (!event.ctrlKey && (event.key === 'Enter' || event.keyCode === 13)) { 
     event.preventDefault();
     saveHistory(editor.value, editor.selectionStart);
@@ -372,11 +353,15 @@ function copyLineResult() {
   }
 }
 
-// Кнопки интерфейса
+// КНОПКИ ИНТЕРФЕЙСА
 document.getElementById('clear-btn').onclick = () => {
     saveHistory(editor.value, editor.selectionStart, true);
     editor.value = "";
     editor.dispatchEvent(new Event('input'));
+    
+    // --- ИЗМЕНЕНИЕ ЗДЕСЬ: Возвращаем фокус ---
+    editor.focus(); 
+    
     saveHistory("", 0, true);
 };
 
@@ -385,7 +370,6 @@ helpBtn.onclick = () => {
   saveHistory(editor.value, editor.selectionStart, true);
   if (editor.value && !editor.value.endsWith('\n')) editor.value += '\n\n';
   
-  // Вставляем текст помощи с версией
   editor.value += `ConCalc v${APP_VERSION}
 
 Математические возможности:
